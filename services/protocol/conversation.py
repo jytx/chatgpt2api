@@ -136,7 +136,7 @@ def assistant_history_messages(messages: list[dict[str, Any]]) -> list[str]:
 def build_image_prompt(prompt: str, size: str | None) -> str:
     if not size:
         return prompt
-    if size not in {"1:1", "16:9", "9:16", "4:3", "3:4"}:
+    if size not in {"1:1", "16:9", "9:16", "4:3", "3:4", "2.35:1"}:
         return f"{prompt.strip()}\n\n输出图片，宽高比为 {size}。"
     hint = {
         "1:1": "输出为 1:1 正方形构图，主体居中，适合正方形画幅。",
@@ -144,6 +144,7 @@ def build_image_prompt(prompt: str, size: str | None) -> str:
         "9:16": "输出为 9:16 竖屏构图，适合竖版画幅展示。",
         "4:3": "输出为 4:3 比例，兼顾宽度与高度，适合展示画面细节。",
         "3:4": "输出为 3:4 比例，纵向构图，适合人物肖像或竖向场景。",
+        "2.35:1": "输出为 2.35:1 超宽幅构图，适合电影画面或公众号封面。",
     }[size]
     return f"{prompt.strip()}\n\n{hint}"
 
