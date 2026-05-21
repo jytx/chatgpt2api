@@ -20,6 +20,8 @@ import { Button } from "@/components/ui/button";
 import {
   createImageEditTask,
   createImageGenerationTask,
+  editImage,
+  generateImage,
   fetchAccounts,
   fetchImageTasks,
   type Account,
@@ -347,6 +349,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [imagePrompt, setImagePrompt] = useState("");
   const [imageCount, setImageCount] = useState("1");
   const [imageSize, setImageSize] = useState("");
+  const [asyncMode, setAsyncMode] = useState(true);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
@@ -1079,6 +1082,81 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
     const effectiveImageMode: ImageConversationMode = referenceImageFiles.length > 0 ? "edit" : "generate";
 
+    if (!asyncMode) {
+      // 同步模式：直接调用 API，等待结果
+      const targetConversation = selectedConversationId
+        ? conversationsRef.current.find((conversation) => conversation.id === selectedConversationId) ?? null
+        : null;
+      const now = new Date().toISOString();
+      const conversationId = targetConversation?.id ?? createId();
+      const turnId = createId();
+      const imageId = `${turnId}-0`;
+
+      const loadingTurn: ImageTurn = {
+        id: turnId,
+        prompt,
+        model: "gpt-image-2",
+        mode: effectiveImageMode,
+        referenceImages: effectiveImageMode === "edit" ? referenceImages : [],
+        count: 1,
+        size: imageSize,
+        images: [{ id: imageId, taskId: turnId, status: "loading" }],
+        createdAt: now,
+        status: "generating",
+      };
+
+      const syncConversation: ImageConversation = targetConversation
+        ? { ...targetConversation, updatedAt: now, turns: [...targetConversation.turns, loadingTurn] }
+        : { id: conversationId, title: buildConversationTitle(prompt), createdAt: now, updatedAt: now, turns: [loadingTurn] };
+
+      setSelectedConversationId(conversationId);
+      clearComposerInputs();
+      await persistConversation(syncConversation);
+
+      try {
+        const model = imageSize ? "gpt-image-2" : undefined;
+        const result = effectiveImageMode === "edit"
+          ? await editImage(referenceImageFiles, prompt, model, imageSize || undefined)
+          : await generateImage(prompt, model, imageSize || undefined);
+
+        const resultItem = result.data?.[0];
+        const successTurn: ImageTurn = {
+          ...loadingTurn,
+          status: "done",
+          images: [{
+            id: imageId,
+            taskId: turnId,
+            status: "success" as const,
+            ...(resultItem?.b64_json ? { b64_json: resultItem.b64_json } : {}),
+            ...(resultItem?.url ? { url: resultItem.url } : {}),
+            revised_prompt: resultItem?.revised_prompt,
+          }],
+        };
+
+        const updatedConversation: ImageConversation = {
+          ...syncConversation,
+          turns: syncConversation.turns.map((t) => (t.id === turnId ? successTurn : t)),
+        };
+        await persistConversation(updatedConversation);
+        toast.success("图片生成完成");
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : "生成失败";
+        const errorTurn: ImageTurn = {
+          ...loadingTurn,
+          status: "done",
+          images: [{ id: imageId, taskId: turnId, status: "error" as const, error: errorMsg }],
+        };
+        const updatedConversation: ImageConversation = {
+          ...syncConversation,
+          turns: syncConversation.turns.map((t) => (t.id === turnId ? errorTurn : t)),
+        };
+        await persistConversation(updatedConversation);
+        toast.error(errorMsg);
+      }
+      return;
+    }
+
+    // 异步模式：原有逻辑
     const targetConversation = selectedConversationId
       ? conversationsRef.current.find((conversation) => conversation.id === selectedConversationId) ?? null
       : null;
@@ -1226,12 +1304,14 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             imageSize={imageSize}
             availableQuota={availableQuota}
             activeTaskCount={activeTaskCount}
+            asyncMode={asyncMode}
             referenceImages={referenceImages}
             textareaRef={textareaRef}
             fileInputRef={fileInputRef}
             onPromptChange={setImagePrompt}
             onImageCountChange={(value) => setImageCount(value ? clampImageCount(value) : "")}
             onImageSizeChange={setImageSize}
+            onAsyncModeChange={setAsyncMode}
             onSubmit={handleSubmit}
             onPickReferenceImage={() => fileInputRef.current?.click()}
             onReferenceImageChange={handleReferenceImageChange}
