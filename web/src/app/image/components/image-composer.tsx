@@ -60,6 +60,7 @@ export function ImageComposer({
     { value: "4:3", label: "4:3 (横版)" },
     { value: "3:4", label: "3:4 (竖版)" },
     { value: "9:16", label: "9:16 (竖版)" },
+    { value: "2.35:1", label: "2.35:1 (超宽幅)" },
   ];
   const imageSizeLabel = imageSizeOptions.find((option) => option.value === imageSize)?.label || "未指定";
 
