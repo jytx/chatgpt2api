@@ -28,3 +28,10 @@ docker-compose-local.yml
 
 # Git cache
 git_cache/
+
+# Local scripts & runtime
+start.sh
+stop.sh
+.pid
+chatgpt2api.log
+.spec-workflow/
