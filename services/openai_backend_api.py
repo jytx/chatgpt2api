@@ -25,6 +25,11 @@ class InvalidAccessTokenError(RuntimeError):
     pass
 
 
+class RefreshTokenExpiredError(RuntimeError):
+    """refresh_token 刷新失败，账号可能已被封禁。"""
+    pass
+
+
 class ImagePollTimeoutError(RuntimeError):
     pass
 
@@ -231,6 +236,53 @@ class OpenAIBackendAPI:
             "status": result.get("status"),
         })
         return result
+
+    @staticmethod
+    def refresh_access_token(refresh_token: str) -> Dict[str, str]:
+        """使用 refresh_token 获取新的 access_token。
+
+        参数：
+        - refresh_token：注册时获取的 refresh_token
+
+        返回：{"access_token": ..., "refresh_token": ..., "id_token": ...}
+
+        失败时抛出 RefreshTokenExpiredError。
+        """
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        try:
+            resp = requests.post(
+                "https://auth.openai.com/oauth/token",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id": "app_2SKx67EdpoN0G6j64rFvigXD",
+                },
+                **proxy_settings.build_session_kwargs(impersonate="edge101", verify=False),
+                timeout=30,
+            )
+        except Exception as exc:
+            raise RefreshTokenExpiredError(f"refresh_token request failed: {exc}") from exc
+
+        if resp.status_code != 200:
+            raise RefreshTokenExpiredError(
+                f"refresh_token rejected: HTTP {resp.status_code} {resp.text[:200]}"
+            )
+
+        data = resp.json()
+        new_access_token = str(data.get("access_token") or "").strip()
+        new_refresh_token = str(data.get("refresh_token") or "").strip()
+        new_id_token = str(data.get("id_token") or "").strip()
+
+        if not new_access_token:
+            raise RefreshTokenExpiredError("refresh_token response missing access_token")
+
+        return {
+            "access_token": new_access_token,
+            "refresh_token": new_refresh_token,
+            "id_token": new_id_token,
+        }
 
     def _bootstrap_headers(self) -> Dict[str, str]:
         """构造首页预热请求头。"""
