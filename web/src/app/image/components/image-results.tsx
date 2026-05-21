@@ -280,7 +280,8 @@ export function ImageResults({
                               turn.size === "9:16" && "sm:aspect-[9/16]",
                               turn.size === "4:3" && "sm:aspect-[4/3]",
                               turn.size === "3:4" && "sm:aspect-[3/4]",
-                              !["1:1", "16:9", "9:16", "4:3", "3:4"].includes(turn.size) && "sm:aspect-square",
+                              turn.size === "2.35:1" && "sm:aspect-[2.35/1]",
+                              !["1:1", "16:9", "9:16", "4:3", "3:4", "2.35:1"].includes(turn.size) && "sm:aspect-square",
                             )}
                           >
                             <div className="flex h-full min-h-16 flex-col items-center justify-center gap-1.5 px-2 py-2 text-center text-[11px] leading-4 text-rose-600 sm:gap-3 sm:px-6 sm:py-8 sm:text-sm sm:leading-6">
@@ -307,7 +308,8 @@ export function ImageResults({
                             turn.size === "9:16" && "aspect-[9/16]",
                             turn.size === "4:3" && "aspect-[4/3]",
                             turn.size === "3:4" && "aspect-[3/4]",
-                            !["1:1", "16:9", "9:16", "4:3", "3:4"].includes(turn.size) && "aspect-square",
+                            turn.size === "2.35:1" && "aspect-[2.35/1]",
+                            !["1:1", "16:9", "9:16", "4:3", "3:4", "2.35:1"].includes(turn.size) && "aspect-square",
                           )}
                         >
                           <div className="flex h-full flex-col items-center justify-center gap-1.5 px-2 py-3 text-center text-stone-500 sm:gap-3 sm:px-6 sm:py-8">

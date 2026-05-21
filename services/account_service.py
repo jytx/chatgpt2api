@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from threading import Condition, Lock
@@ -13,6 +14,7 @@ from services.log_service import (
     log_service,
 )
 from services.storage.base import StorageBackend
+from utils.log import logger
 from utils.helper import anonymize_token
 
 
@@ -196,7 +198,86 @@ class AccountService:
             self._accounts[access_token] = account
             self._save_accounts()
 
+    def _try_refresh_token(self, access_token: str) -> dict | None:
+        """尝试用 refresh_token 刷新 access_token，最多重试 3 次。
+
+        返回新的账号数据（已更新 token），失败返回 None。
+        """
+        account = self.get_account(access_token)
+        if not account:
+            return None
+
+        refresh_token = account.get("refresh_token", "")
+        if not refresh_token:
+            logger.warning({"event": "refresh_skip_no_token", "token": anonymize_token(access_token)})
+            return None
+
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                from services.openai_backend_api import OpenAIBackendAPI, RefreshTokenExpiredError
+                logger.info({
+                    "event": "refresh_token_attempt",
+                    "token": anonymize_token(access_token),
+                    "attempt": attempt,
+                    "max_retries": max_retries,
+                })
+                new_tokens = OpenAIBackendAPI.refresh_access_token(refresh_token)
+                new_access_token = new_tokens["access_token"]
+                new_refresh_token = new_tokens.get("refresh_token", refresh_token)
+                new_id_token = new_tokens.get("id_token", "")
+
+                # 用新 token 替换旧账号
+                with self._lock:
+                    old_account = self._accounts.pop(access_token, None)
+                    if old_account is None:
+                        return None
+                    updated = dict(old_account)
+                    updated["access_token"] = new_access_token
+                    updated["refresh_token"] = new_refresh_token
+                    if new_id_token:
+                        updated["id_token"] = new_id_token
+                    updated["status"] = "正常"
+                    updated["quota"] = 0
+                    updated["image_quota_unknown"] = True
+                    normalized = self._normalize_account(updated)
+                    if normalized is None:
+                        return None
+                    self._accounts[new_access_token] = normalized
+                    self._save_accounts()
+
+                log_service.add(LOG_TYPE_ACCOUNT, "Token 刷新成功", {
+                    "old_token": anonymize_token(access_token),
+                    "new_token": anonymize_token(new_access_token),
+                    "attempt": attempt,
+                })
+                logger.info({"event": "refresh_token_success", "token": anonymize_token(new_access_token)})
+                return self.get_account(new_access_token)
+
+            except Exception as exc:
+                logger.warning({
+                    "event": "refresh_token_failed",
+                    "token": anonymize_token(access_token),
+                    "attempt": attempt,
+                    "error": str(exc),
+                })
+                if attempt < max_retries:
+                    time.sleep(2 * attempt)
+
+        # 3 次都失败，标记为禁用
+        log_service.add(LOG_TYPE_ACCOUNT, "Token 刷新失败，标记为禁用", {
+            "token": anonymize_token(access_token),
+            "reason": f"连续 {max_retries} 次刷新失败",
+        })
+        self.update_account(access_token, {"status": "禁用", "quota": 0})
+        return None
+
     def remove_invalid_token(self, access_token: str, event: str) -> bool:
+        # 先尝试用 refresh_token 刷新
+        refreshed = self._try_refresh_token(access_token)
+        if refreshed is not None:
+            return False
+
         if not config.auto_remove_invalid_accounts:
             self.update_account(access_token, {"status": "异常", "quota": 0})
             return False
