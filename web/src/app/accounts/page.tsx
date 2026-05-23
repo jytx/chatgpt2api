@@ -208,13 +208,14 @@ function AccountsPageContent() {
       const data = await fetchAccounts();
       setAccounts(data.items);
       setSelectedIds((prev) => prev.filter((id) => data.items.some((item) => item.access_token === id)));
+      if (!silent) {
+        toast.success(`已刷新，共 ${data.items.length} 个账户`);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "加载账户失败";
       toast.error(message);
     } finally {
-      if (!silent) {
-        setIsLoading(false);
-      }
+      setIsLoading(false);
     }
   };
 
@@ -223,7 +224,7 @@ function AccountsPageContent() {
       return;
     }
     didLoadRef.current = true;
-    void loadAccounts();
+    void loadAccounts(true);
   }, []);
 
   const filteredAccounts = useMemo(() => {
