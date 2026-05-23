@@ -477,8 +477,31 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     };
   }, [isAdmin, loadQuota]);
 
+  const isNearBottomRef = useRef(true);
+
+  useEffect(() => {
+    const viewport = resultsViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = viewport;
+      isNearBottomRef.current = scrollHeight - scrollTop - clientHeight < 80;
+    };
+
+    viewport.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      viewport.removeEventListener("scroll", handleScroll);
+    };
+  }, []);
+
   useEffect(() => {
     if (!selectedConversation) {
+      return;
+    }
+
+    if (!isNearBottomRef.current) {
       return;
     }
 
