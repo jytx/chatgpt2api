@@ -210,20 +210,6 @@ export function ImageComposer({
                       className="h-7 w-[40px] border-0 bg-transparent px-0 text-center text-xs font-medium text-stone-700 shadow-none focus-visible:ring-0 sm:h-8 sm:w-[64px] sm:text-sm"
                     />
                   </div>
-                  <button
-                    type="button"
-                    className={cn(
-                      "flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium transition sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-xs",
-                      asyncMode
-                        ? "border-blue-200 bg-blue-50 text-blue-700"
-                        : "border-stone-200 bg-white text-stone-500"
-                    )}
-                    onClick={() => onAsyncModeChange(!asyncMode)}
-                    title={asyncMode ? "异步模式：任务排队执行，不阻塞页面" : "同步模式：直接等待结果返回"}
-                  >
-                    <span className={cn("size-2 rounded-full", asyncMode ? "bg-blue-500" : "bg-stone-300")} />
-                    <span className="hidden sm:inline">{asyncMode ? "异步" : "同步"}</span>
-                  </button>
                   <div
                     className="relative flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2 py-0.5 text-[11px] sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-[13px]"
                   >
@@ -278,6 +264,20 @@ export function ImageComposer({
                       </div>
                     ) : null}
                   </div>
+                  <button
+                    type="button"
+                    className={cn(
+                      "flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium transition sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-xs",
+                      asyncMode
+                        ? "border-blue-200 bg-blue-50 text-blue-700"
+                        : "border-stone-200 bg-white text-stone-500"
+                    )}
+                    onClick={() => onAsyncModeChange(!asyncMode)}
+                    title={asyncMode ? "异步模式：任务排队执行，不阻塞页面" : "同步模式：直接等待结果返回"}
+                  >
+                    <span className={cn("size-2 rounded-full", asyncMode ? "bg-blue-500" : "bg-stone-300")} />
+                    <span className="hidden sm:inline">{asyncMode ? "异步" : "同步"}</span>
+                  </button>
 
                 </div>
 
