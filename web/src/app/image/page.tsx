@@ -51,7 +51,9 @@ const IMAGE_COUNT_STORAGE_KEY = "chatgpt2api:image_last_count";
 function clampImageCount(value: string) {
   return String(Math.min(100, Math.max(1, Math.floor(Number(value) || 1))));
 }
-const activeConversationQueueIds = new Set<string>();
+const activeTurnIds = new Set<string>();
+const conversationActiveCount = new Map<string, number>();
+const MAX_CONCURRENT_TURNS_PER_CONVERSATION = 3;
 
 function buildConversationTitle(prompt: string) {
   const trimmed = prompt.trim();
@@ -840,13 +842,15 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   /* eslint-disable react-hooks/preserve-manual-memoization */
   const runConversationQueue = useCallback(
     async (conversationId: string) => {
-      if (activeConversationQueueIds.has(conversationId)) {
+      const currentCount = conversationActiveCount.get(conversationId) || 0;
+      if (currentCount >= MAX_CONCURRENT_TURNS_PER_CONVERSATION) {
         return;
       }
 
       const snapshot = conversationsRef.current.find((conversation) => conversation.id === conversationId);
       const activeTurn = snapshot?.turns.find(
         (turn) =>
+          !activeTurnIds.has(turn.id) &&
           (turn.status === "queued" || turn.status === "generating") &&
           turn.images.some((image) => image.status === "loading"),
       );
@@ -854,7 +858,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         return;
       }
 
-      activeConversationQueueIds.add(conversationId);
+      activeTurnIds.add(activeTurn.id);
+      conversationActiveCount.set(conversationId, currentCount + 1);
       const applyTasks = async (tasks: ImageTask[]) => {
         const taskMap = new Map(tasks.map((task) => [task.id, task]));
         await updateConversation(conversationId, (current) => {
@@ -979,12 +984,19 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         });
         toast.error(message);
       } finally {
-        activeConversationQueueIds.delete(conversationId);
+        activeTurnIds.delete(activeTurn.id);
+        const remaining = (conversationActiveCount.get(conversationId) || 1) - 1;
+        if (remaining <= 0) {
+          conversationActiveCount.delete(conversationId);
+        } else {
+          conversationActiveCount.set(conversationId, remaining);
+        }
         for (const conversation of conversationsRef.current) {
           if (
-            !activeConversationQueueIds.has(conversation.id) &&
+            (conversationActiveCount.get(conversation.id) || 0) < MAX_CONCURRENT_TURNS_PER_CONVERSATION &&
             conversation.turns.some(
               (turn) =>
+                !activeTurnIds.has(turn.id) &&
                 (turn.status === "queued" || turn.status === "generating") &&
                 turn.images.some((image) => image.status === "loading"),
             )
@@ -1083,10 +1095,11 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   useEffect(() => {
     for (const conversation of conversations) {
       if (
-        !activeConversationQueueIds.has(conversation.id) &&
+        (conversationActiveCount.get(conversation.id) || 0) < MAX_CONCURRENT_TURNS_PER_CONVERSATION &&
         conversation.turns.some(
           (turn) =>
             !turn.resultsDeleted &&
+            !activeTurnIds.has(turn.id) &&
             (turn.status === "queued" || turn.status === "generating") &&
             turn.images.some((image) => image.status === "loading"),
         )
