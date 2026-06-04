@@ -35,3 +35,8 @@ stop.sh
 .pid
 chatgpt2api.log
 .spec-workflow/
+
+# 调试/测试输出目录
+loginwithpassword_*/
+logwithemailverifycode_*/
+test_batch_output/
