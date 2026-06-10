@@ -73,14 +73,40 @@ const aspectOptions = [
   { ratio: "4:3", tier: "1k", width: "1365", height: "1024", label: "4:3", icon: RectangleHorizontal },
   { ratio: "9:16", tier: "1k", width: "1088", height: "1920", label: "9:16", icon: RectangleVertical },
   { ratio: "16:9", tier: "1k", width: "1920", height: "1088", label: "16:9", icon: RectangleHorizontal },
+  { ratio: "2.35:1", tier: "1k", width: "1920", height: "816", label: "2.35:1", icon: RectangleHorizontal },
+  { ratio: "1:2.35", tier: "1k", width: "816", height: "1920", label: "1:2.35", icon: RectangleVertical },
   { ratio: "1:1", tier: "2k", width: "2048", height: "2048", label: "1:1(2k)", icon: Square },
   { ratio: "16:9", tier: "2k", width: "2560", height: "1440", label: "16:9(2k)", icon: RectangleHorizontal },
   { ratio: "9:16", tier: "2k", width: "1440", height: "2560", label: "9:16(2k)", icon: RectangleVertical },
   { ratio: "16:9", tier: "4k", width: "3840", height: "2160", label: "16:9(4k)", icon: RectangleHorizontal },
   { ratio: "9:16", tier: "4k", width: "2160", height: "3840", label: "9:16(4k)", icon: RectangleVertical },
+  { ratio: "custom", tier: "custom", width: "1024", height: "1024", label: "自定义", icon: null },
   { ratio: "auto", tier: "auto", width: "1024", height: "1024", label: "auto", icon: null },
 ];
 const countOptions = Array.from({ length: 10 }, (_, index) => String(index + 1));
+
+// 根据宽高比计算像素尺寸（长边 1536，短边按比例缩放，四舍五入到偶数）
+function ratioToSize(ratioW: number, ratioH: number): { width: string; height: string } {
+  const MAX = 1536;
+  if (ratioW >= ratioH) {
+    const width = MAX;
+    const height = Math.round((MAX * ratioH) / ratioW / 2) * 2;
+    return { width: String(width), height: String(Math.max(2, height)) };
+  }
+  const height = MAX;
+  const width = Math.round((MAX * ratioW) / ratioH / 2) * 2;
+  return { width: String(Math.max(2, width)), height: String(height) };
+}
+
+// 解析比例字符串（如 "5:4"）为数值
+function parseRatioParts(ratio: string): { w: number; h: number } | null {
+  const parts = ratio.split(":");
+  if (parts.length !== 2) return null;
+  const w = parseFloat(parts[0]);
+  const h = parseFloat(parts[1]);
+  if (!w || !h || w <= 0 || h <= 0) return null;
+  return { w, h };
+}
 
 export function ImageComposer({
   prompt,
@@ -116,6 +142,9 @@ export function ImageComposer({
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [isSizeMenuOpen, setIsSizeMenuOpen] = useState(false);
   const [isDraggingImage, setIsDraggingImage] = useState(false);
+  // 自定义比例输入状态
+  const [customRatioW, setCustomRatioW] = useState("16");
+  const [customRatioH, setCustomRatioH] = useState("9");
   const [sizeMenuPos, setSizeMenuPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const sizeMenuRef = useRef<HTMLDivElement>(null);
   const sizeMenuBtnRef = useRef<HTMLButtonElement>(null);
@@ -128,7 +157,7 @@ export function ImageComposer({
     [imageModels],
   );
   const qualityLabel = qualityOptions.find((option) => option.value === imageQuality)?.label || "自动";
-  const ratioLabel = imageRatio === "auto" ? "auto" : `${imageRatio}(${imageTier})`;
+  const ratioLabel = imageRatio === "auto" ? "auto" : imageTier === "custom" ? `${imageRatio}(自定义)` : `${imageRatio}(${imageTier})`;
   const imageSizeLabel = `${qualityLabel} · ${ratioLabel} · ${imageCount || 1} 张`;
   const selectedModelLabel = modelOptions.find((option) => option.value === imageModel)?.label || imageModel;
   const isCodexModel = imageModel.toLowerCase().includes("codex");
@@ -454,7 +483,9 @@ export function ImageComposer({
                           </div>
                           <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
                             {aspectOptions.map((option) => {
-                              const active = option.ratio === imageRatio && option.tier === imageTier && option.width === imageWidth && option.height === imageHeight;
+                              const active = option.ratio === "custom"
+                                ? imageTier === "custom" && !["auto","1:1","2:3","3:2","3:4","4:3","9:16","16:9","2.35:1","1:2.35"].includes(imageRatio)
+                                : option.ratio === imageRatio && option.tier === imageTier && option.width === imageWidth && option.height === imageHeight;
                               const Icon = option.icon;
                               const disabled = !isCodexModel && (option.tier === "2k" || option.tier === "4k");
                               return (
@@ -469,6 +500,21 @@ export function ImageComposer({
                                   )}
                                   onClick={() => {
                                     if (disabled) {
+                                      return;
+                                    }
+                                    if (option.ratio === "custom") {
+                                      const w = parseFloat(customRatioW);
+                                      const h = parseFloat(customRatioH);
+                                      if (w > 0 && h > 0) {
+                                        const size = ratioToSize(w, h);
+                                        onImageRatioChange(`${customRatioW}:${customRatioH}`);
+                                        onImageTierChange("custom");
+                                        onImageWidthChange(size.width);
+                                        onImageHeightChange(size.height);
+                                      } else {
+                                        onImageRatioChange("custom");
+                                        onImageTierChange("custom");
+                                      }
                                       return;
                                     }
                                     onImageRatioChange(option.ratio);
@@ -489,6 +535,52 @@ export function ImageComposer({
                               );
                             })}
                           </div>
+                          {imageTier === "custom" && (
+                            <div className="mt-2 flex items-center gap-2">
+                              <span className="text-xs text-stone-500">自定义比例</span>
+                              <div className="flex items-center gap-1.5">
+                                <Input
+                                  type="number"
+                                  inputMode="decimal"
+                                  min="0.1"
+                                  step="any"
+                                  value={customRatioW}
+                                  onChange={(event) => {
+                                    const w = event.target.value;
+                                    setCustomRatioW(w);
+                                    const h = parseFloat(customRatioH);
+                                    const wNum = parseFloat(w);
+                                    if (wNum > 0 && h > 0) {
+                                      const size = ratioToSize(wNum, h);
+                                      onImageWidthChange(size.width);
+                                      onImageHeightChange(size.height);
+                                    }
+                                  }}
+                                  className="h-7 w-16 rounded-lg border-stone-200 bg-stone-50 px-2 text-center text-sm shadow-none focus-visible:ring-1 focus-visible:ring-stone-400"
+                                />
+                                <span className="text-stone-400">:</span>
+                                <Input
+                                  type="number"
+                                  inputMode="decimal"
+                                  min="0.1"
+                                  step="any"
+                                  value={customRatioH}
+                                  onChange={(event) => {
+                                    const h = event.target.value;
+                                    setCustomRatioH(h);
+                                    const w = parseFloat(customRatioW);
+                                    const hNum = parseFloat(h);
+                                    if (w > 0 && hNum > 0) {
+                                      const size = ratioToSize(w, hNum);
+                                      onImageWidthChange(size.width);
+                                      onImageHeightChange(size.height);
+                                    }
+                                  }}
+                                  className="h-7 w-16 rounded-lg border-stone-200 bg-stone-50 px-2 text-center text-sm shadow-none focus-visible:ring-1 focus-visible:ring-stone-400"
+                                />
+                              </div>
+                            </div>
+                          )}
                         </div>
                         <div className="border-t border-stone-100 pt-3">
                           <div className="mb-2 text-sm font-medium text-stone-900">生成数量</div>

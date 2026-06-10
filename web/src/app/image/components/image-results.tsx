@@ -318,7 +318,20 @@ export function ImageResults({
                                 turn.ratio === "9:16" && "sm:aspect-[9/16]",
                                 turn.ratio === "4:3" && "sm:aspect-[4/3]",
                                 turn.ratio === "3:4" && "sm:aspect-[3/4]",
+                                turn.ratio === "2.35:1" && "sm:aspect-[2.35/1]",
+                                turn.ratio === "1:2.35" && "sm:aspect-[1/2.35]",
                               )}
+                              style={(() => {
+                                if (!["1:1","16:9","9:16","4:3","3:4","2.35:1","1:2.35","2:3","3:2","auto"].includes(turn.ratio) && turn.ratio) {
+                                  const parts = turn.ratio.split(":");
+                                  if (parts.length === 2) {
+                                    const w = parseFloat(parts[0]);
+                                    const h = parseFloat(parts[1]);
+                                    if (w > 0 && h > 0) return { aspectRatio: `${w}/${h}` };
+                                  }
+                                }
+                                return undefined;
+                              })()}
                             >
                             <div className="flex h-full min-h-16 flex-col items-center justify-center gap-1.5 px-2 py-2 text-center text-[11px] leading-4 text-rose-600 sm:gap-3 sm:px-6 sm:py-8 sm:text-sm sm:leading-6">
                               <p className="font-medium">图片 {index + 1}/{turn.images.length}</p>
@@ -374,7 +387,20 @@ export function ImageResults({
                               turn.ratio === "9:16" && "aspect-[9/16]",
                               turn.ratio === "4:3" && "aspect-[4/3]",
                               turn.ratio === "3:4" && "aspect-[3/4]",
+                              turn.ratio === "2.35:1" && "aspect-[2.35/1]",
+                              turn.ratio === "1:2.35" && "aspect-[1/2.35]",
                             )}
+                            style={(() => {
+                              if (!["1:1","16:9","9:16","4:3","3:4","2.35:1","1:2.35","2:3","3:2","auto"].includes(turn.ratio) && turn.ratio) {
+                                const parts = turn.ratio.split(":");
+                                if (parts.length === 2) {
+                                  const w = parseFloat(parts[0]);
+                                  const h = parseFloat(parts[1]);
+                                  if (w > 0 && h > 0) return { aspectRatio: `${w}/${h}` };
+                                }
+                              }
+                              return undefined;
+                            })()}
                           >
                           <div className="flex h-full flex-col items-center justify-center gap-1.5 px-2 py-3 text-center text-stone-500 sm:gap-3 sm:px-6 sm:py-8">
                             <div className="rounded-full bg-white p-2 shadow-sm sm:p-3">
