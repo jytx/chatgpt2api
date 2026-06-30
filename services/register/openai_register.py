@@ -521,7 +521,21 @@ class PlatformRegistrar:
 
     def _validate_otp(self, code: str, index: int) -> None:
         step(index, f"开始校验验证码 {code}")
-        resp, error = validate_otp(self.session, self.device_id, code)
+        url = f"{auth_base}/api/accounts/email-otp/validate"
+        headers = self._json_headers(f"{auth_base}/email-verification")
+        headers["openai-sentinel-token"] = build_sentinel_token(self.session, self.device_id, "authorize_continue")
+        headers = _headers_with_clearance(headers, url, self.proxy, self.clearance_user_agent)
+        resp, error = request_with_local_retry(self.session, "post", url, json={"code": code}, headers=headers, verify=False)
+        if _is_cloudflare_challenge(resp):
+            bundle = self._refresh_cloudflare_clearance(auth_base, index)
+            if bundle is None:
+                raise RuntimeError(_cloudflare_block_message(resp, reason=self.clearance_failure_reason))
+            headers = self._json_headers(f"{auth_base}/email-verification")
+            headers["openai-sentinel-token"] = build_sentinel_token(self.session, self.device_id, "authorize_continue")
+            headers = _headers_with_clearance(headers, url, self.proxy, self.clearance_user_agent)
+            resp, error = request_with_local_retry(self.session, "post", url, json={"code": code}, headers=headers, verify=False)
+            if _is_cloudflare_challenge(resp):
+                raise RuntimeError(_cloudflare_block_message(resp, "Cloudflare clearance 重试仍被拦截"))
         if resp is None or resp.status_code != 200:
             body = ""
             try:
