@@ -24,6 +24,11 @@ from api.support import (
     sanitize_sub2api_servers,
 )
 from services.account_service import account_service
+from services.password_import_service import (
+    get_password_import_progress,
+    parse_credential_text,
+    start_password_import,
+)
 from services.cpa_service import cpa_config, cpa_import_service, list_remote_files
 from services.oauth_login_service import OAuthLoginError, oauth_login_service
 from services.sub2api_service import (
@@ -61,6 +66,11 @@ class AccountRefreshRequest(BaseModel):
 class AccountExportRequest(BaseModel):
     access_tokens: list[str] = Field(default_factory=list)
     format: Literal["json", "zip"] = "json"
+
+
+class AccountPasswordImportRequest(BaseModel):
+    """账密批量导入请求。text 为每行「邮箱----密码----TOTP密钥」的凭据文本。"""
+    text: str = ""
 
 
 class AccountUpdateRequest(BaseModel):
@@ -301,6 +311,25 @@ def create_router() -> APIRouter:
         progress = account_service.get_relogin_progress(progress_id)
         if progress is None:
             raise HTTPException(status_code=404, detail={"error": "progress not found"})
+        return progress
+
+    @router.post("/api/accounts/password-import")
+    async def password_import_start(body: AccountPasswordImportRequest, authorization: str | None = Header(default=None)):
+        """解析账密文本并启动后台批量登录导入，返回进度 ID 供轮询。"""
+        require_admin(authorization)
+        items, invalid_count = parse_credential_text(body.text)
+        if not items:
+            raise HTTPException(status_code=400, detail={"error": "没有解析到有效凭据"})
+        progress_id = start_password_import(items)
+        return {"progress_id": progress_id, "total": len(items), "invalid_count": invalid_count}
+
+    @router.get("/api/accounts/password-import/progress/{progress_id}")
+    async def password_import_progress(progress_id: str, authorization: str | None = Header(default=None)):
+        """查询账密批量导入进度。"""
+        require_admin(authorization)
+        progress = get_password_import_progress(progress_id)
+        if progress is None:
+            raise HTTPException(status_code=404, detail={"error": "进度不存在"})
         return progress
 
     @router.post("/api/accounts/export")

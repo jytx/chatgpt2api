@@ -346,6 +346,41 @@ export async function createAccounts(tokens: string[], accounts: AccountImportPa
   });
 }
 
+export type PasswordImportStartResponse = {
+  progress_id: string;
+  total: number;
+  invalid_count: number;
+};
+
+export type PasswordImportResultItem = {
+  email: string;
+  status: string;
+  error: string;
+};
+
+export type PasswordImportProgress = {
+  total: number;
+  processed: number;
+  added: number;
+  skipped: number;
+  failed: number;
+  done: boolean;
+  results: PasswordImportResultItem[];
+};
+
+export async function startPasswordImport(text: string) {
+  return httpRequest<PasswordImportStartResponse>("/api/accounts/password-import", {
+    method: "POST",
+    body: { text },
+  });
+}
+
+export async function fetchPasswordImportProgress(progressId: string) {
+  return httpRequest<PasswordImportProgress>(
+    `/api/accounts/password-import/progress/${encodeURIComponent(progressId)}`,
+  );
+}
+
 export type OAuthLoginStartResponse = {
   session_id: string;
   authorize_url: string;

@@ -9,8 +9,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Condition, Lock, Thread
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
+
+import pyotp
 
 from services.config import config
 from services.log_service import (
@@ -20,6 +22,9 @@ from services.log_service import (
 from services.storage.base import StorageBackend
 from utils.log import logger
 from utils.helper import anonymize_token
+
+if TYPE_CHECKING:
+    from curl_cffi.requests import Session
 
 
 class AccountService:
@@ -457,24 +462,25 @@ class AccountService:
                 self._record_token_refresh_error(active_token, event, error_str)
                 # 如果是 app_session_terminated 错误，尝试密码重新登录
                 if "app_session_terminated" in error_str.lower():
-                    # 获取账号信息（email, password）
+                    # 获取账号信息（email, password, totp_secret）
                     email = str(account.get("email") or "").strip()
                     password = str(account.get("password") or "").strip()
+                    totp_secret = str(account.get("totp_secret") or "").strip()
                     if email and password:
                         # 创建新线程执行密码重新登录
                         t = Thread(
                             target=self._password_re_login_thread,
-                            args=(active_token, email, password, event),
+                            args=(active_token, email, password, totp_secret, event),
                             daemon=True,
                         )
                         t.start()
                 return active_token
             return self._apply_refreshed_tokens(active_token, token_data, event)
 
-    def _password_re_login_thread(self, access_token: str, email: str, password: str, event: str, progress_id: str | None = None) -> None:
+    def _password_re_login_thread(self, access_token: str, email: str, password: str, totp_secret: str, event: str, progress_id: str | None = None) -> None:
         """密码重新登录线程入口"""
         try:
-            result = self._login_with_password(email, password)
+            result = self._login_with_password(email, password, totp_secret)
             if result.get("ok"):
                 # 登录成功，更新账号
                 new_access_token = result.get("access_token", "")
@@ -583,8 +589,106 @@ class AccountService:
             if progress_id:
                 self.update_relogin_progress(progress_id, access_token, "异常", str(exc))
 
-    def _login_with_password(self, email: str, password: str) -> dict:
-        """通过邮箱+密码登录，返回 {access_token, refresh_token, id_token, ...}"""
+    def _verify_mfa_code(self, session: "Session", device_id: str, totp_secret: str, factor_id: str, factor_type: str) -> dict:
+        """提交 TOTP 动态码完成两步验证，返回 {ok, continue_url} 或 {ok: False, error, detail}。
+
+        两步流程（auth.openai.com 实测确认，2026-10 前端逆向 + 真实账号验证）：
+        ① POST /api/accounts/mfa/issue_challenge 携带 {id, type, force_fresh_challenge} 发起挑战；
+        ② POST /api/accounts/mfa/verify 携带 {id, type, code} 提交 6 位动态码，
+           成功后返回带授权码的 continue_url（platform.openai.com/auth/callback?code=...）。
+        两步均需携带 sentinel token（flow 为 verify_mfa）。
+
+        参数：
+        - `session`：登录流程中复用的 curl_cffi Session（携带已建立的登录 Cookie 上下文）
+        - `device_id`：登录流程的设备 ID（sentinel 与 MFA 校验均需要）
+        - `totp_secret`：账号的 TOTP 密钥（base32），用于计算 6 位动态码
+        - `factor_id`：验证方式 ID（password/verify 响应里 factors 列表的 totp 项）
+        - `factor_type`：验证方式类型（如 "totp"）
+        """
+        auth_base = "https://auth.openai.com"
+        mfa_base = f"{auth_base}/api/accounts/mfa"
+        totp_code = pyotp.TOTP(totp_secret).now()
+        debug_detail: dict[str, Any] = {}
+
+        def build_headers() -> dict[str, str]:
+            headers = {
+                "accept": "application/json",
+                "accept-language": "zh-CN,zh;q=0.9",
+                "content-type": "application/json",
+                "origin": auth_base,
+                "priority": "u=1, i",
+                "user-agent": self._OAUTH_USER_AGENT,
+                "sec-ch-ua": '"Chromium";v="145", "Google Chrome";v="145", "Not/A)Brand";v="99"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-origin",
+                "referer": f"{auth_base}/mfa-challenge/{factor_id}",
+                "oai-device-id": device_id,
+            }
+            # MFA 校验与密码提交一样需要 sentinel token（flow 为 verify_mfa，实测有效）
+            try:
+                from utils.sentinel import build_sentinel_token
+                sentinel_val, oai_sc_val = build_sentinel_token(session, device_id, "verify_mfa")
+                headers["openai-sentinel-token"] = sentinel_val
+                if oai_sc_val:
+                    session.cookies.set("oai-sc", oai_sc_val, domain=".openai.com")
+            except Exception:
+                pass
+            return headers
+
+        # ① 发起挑战（失败不阻断，继续尝试 verify）
+        try:
+            challenge_resp = session.post(
+                f"{mfa_base}/issue_challenge",
+                headers=build_headers(),
+                json={"id": factor_id, "type": factor_type, "force_fresh_challenge": False},
+                timeout=30,
+            )
+            debug_detail["challenge_status"] = challenge_resp.status_code
+            try:
+                debug_detail["challenge_body"] = challenge_resp.json() if challenge_resp.text else {}
+            except Exception:
+                debug_detail["challenge_body"] = str(challenge_resp.text or "")[:300]
+        except Exception as exc:
+            debug_detail["challenge_error"] = str(exc)
+
+        # ② 提交动态码验证
+        try:
+            verify_resp = session.post(
+                f"{mfa_base}/verify",
+                headers=build_headers(),
+                json={"id": factor_id, "type": factor_type, "code": totp_code},
+                timeout=30,
+            )
+        except Exception as exc:
+            return {"ok": False, "error": "mfa_request_failed", "detail": {**debug_detail, "message": str(exc)}}
+
+        verify_data = {}
+        try:
+            verify_data = verify_resp.json() if verify_resp.text else {}
+        except Exception:
+            pass
+
+        if verify_resp.status_code != 200:
+            return {
+                "ok": False,
+                "error": f"mfa_verify_failed_{verify_resp.status_code}",
+                "detail": {**debug_detail, "verify_body": verify_data},
+            }
+
+        continue_url = str(verify_data.get("continue_url") or "").strip()
+        if not continue_url:
+            return {"ok": False, "error": "mfa_no_continue_url", "detail": {**debug_detail, "verify_body": verify_data}}
+        return {"ok": True, "continue_url": continue_url}
+
+    def _login_with_password(self, email: str, password: str, totp_secret: str) -> dict:
+        """通过邮箱+密码登录，返回 {access_token, refresh_token, id_token, ...}
+
+        参数 `totp_secret`：账号开启两步验证时必须提供（base32 TOTP 密钥），
+        未开启两步验证的账号传空字符串即可。
+        """
         from curl_cffi import requests
         
         # 常量
@@ -727,6 +831,37 @@ class AccountService:
             
             # 获取 authorization code
             continue_url = str(login_data.get("continue_url") or "").strip()
+            page_type = ""
+            page_info = login_data.get("page")
+            if isinstance(page_info, dict):
+                page_type = str(page_info.get("type") or "")
+
+            # ─── 处理 TOTP 两步验证（mfa_challenge / mfa_validation）──────────
+            # 密码验证通过但要求动态口令时，从 factors 里选 totp 方式，
+            # 提交挑战 + 动态码，成功后拿回带授权码的新 continue_url。
+            # 注意：mfa_challenge 的 continue_url 指向挑战页（不含授权码），必须覆盖。
+            if page_type in ("mfa_challenge", "mfa_validation"):
+                if not totp_secret:
+                    return {"ok": False, "error": "need_totp_secret", "detail": login_data}
+                factor_id = ""
+                factor_type = "totp"
+                payload_info = page_info.get("payload") if isinstance(page_info, dict) else None
+                factors = payload_info.get("factors") if isinstance(payload_info, dict) else None
+                if isinstance(factors, list):
+                    totp_factors = [
+                        item
+                        for item in factors
+                        if isinstance(item, dict)
+                        and str(item.get("factor_type") or "") == "totp"
+                        and not item.get("is_recovery")
+                    ]
+                    if totp_factors:
+                        factor_id = str(totp_factors[0].get("id") or "")
+                mfa_result = self._verify_mfa_code(session, device_id, totp_secret, factor_id, factor_type)
+                if not mfa_result.get("ok"):
+                    return mfa_result
+                continue_url = str(mfa_result.get("continue_url") or "").strip()
+
             auth_code = ""
             if continue_url:
                 from urllib.parse import parse_qs, urlparse
@@ -735,11 +870,6 @@ class AccountService:
             
             # ─── 处理邮箱 OTP 验证 ──────────────────────────
             if not auth_code:
-                page_type = ""
-                page_info = login_data.get("page")
-                if isinstance(page_info, dict):
-                    page_type = str(page_info.get("type") or "")
-                
                 if page_type == "email_otp_verification":
                     # 需要验证码才能登录，直接标记为账号异常
                     return {"ok": False, "error": "need_verification_code", "detail": login_data}
@@ -1627,11 +1757,12 @@ class AccountService:
                     continue
                 email = str(account.get("email") or "").strip()
                 password = str(account.get("password") or "").strip()
+                totp_secret = str(account.get("totp_secret") or "").strip()
                 if not email or not password:
                     continue
                 t = Thread(
                     target=self._password_re_login_thread,
-                    args=(token, email, password, "auto_relogin_after_refresh"),
+                    args=(token, email, password, totp_secret, "auto_relogin_after_refresh"),
                     daemon=True,
                 )
                 t.start()
@@ -1679,6 +1810,7 @@ class AccountService:
 
             email = str(account.get("email") or "").strip()
             password = str(account.get("password") or "").strip()
+            totp_secret = str(account.get("totp_secret") or "").strip()
             if not email or not password:
                 skipped += 1
                 if progress_id:
@@ -1688,7 +1820,7 @@ class AccountService:
             # 在新线程中执行密码重新登录
             t = Thread(
                 target=self._password_re_login_thread,
-                args=(token, email, password, "manual_relogin", progress_id),
+                args=(token, email, password, totp_secret, "manual_relogin", progress_id),
                 daemon=True,
             )
             t.start()

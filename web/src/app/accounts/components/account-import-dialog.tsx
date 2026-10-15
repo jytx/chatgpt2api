@@ -14,6 +14,7 @@ import {
   LogIn,
   ServerCog,
   Upload,
+  UserRoundKey,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -37,8 +38,9 @@ import {
   type OAuthLoginStartResponse,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { PasswordImportPanel } from "./password-import-panel";
 
-type ImportMethod = "menu" | "token" | "session" | "codex-auth" | "account-json" | "oauth";
+type ImportMethod = "menu" | "token" | "session" | "codex-auth" | "account-json" | "oauth" | "password";
 
 type AccountImportDialogProps = {
   disabled?: boolean;
@@ -712,8 +714,20 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
       );
     }
 
+    if (method === "password") {
+      return (
+        <PasswordImportPanel disabled={footerDisabled} onImported={onImported} />
+      );
+    }
+
     return (
       <div className="space-y-3">
+        <MethodCard
+          title="账密批量导入（邮箱+密码+TOTP）"
+          description="粘贴「邮箱----密码----TOTP密钥」格式的账号，系统自动登录换 token 入池，支持两步验证。"
+          icon={UserRoundKey}
+          onClick={() => setMethod("password")}
+        />
         <MethodCard
           title="OAuth 登录已有账号（带自动刷新）"
           description="用浏览器登录自己的 ChatGPT 账号，回填 callback URL 即可拿到 refresh_token，后台会自动续期。"
@@ -792,9 +806,11 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                     ? "导入 Session JSON"
                     : method === "codex-auth"
                       ? "导入 Codex 认证 JSON"
-                    : method === "oauth"
-                      ? "OAuth 登录已有账号"
-                      : "导入账号 JSON"}
+                      : method === "oauth"
+                        ? "OAuth 登录已有账号"
+                        : method === "password"
+                          ? "账密批量导入"
+                          : "导入账号 JSON"}
             </DialogTitle>
             <DialogDescription className="text-sm leading-6">
               {method === "menu"
@@ -805,9 +821,11 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                     ? "粘贴完整 Session JSON，系统会自动提取 accessToken。"
                     : method === "codex-auth"
                       ? "粘贴 Codex 认证 JSON，系统会按 codex 来源导入。"
-                    : method === "oauth"
-                      ? "用浏览器跑一遍 OpenAI 标准 OAuth，拿回 refresh_token 后系统会自动续期。"
-                      : "支持读取本项目导出的单账号对象或全部账号数组，并在提交前做数量确认。"}
+                      : method === "oauth"
+                        ? "用浏览器跑一遍 OpenAI 标准 OAuth，拿回 refresh_token 后系统会自动续期。"
+                        : method === "password"
+                          ? "每行一条「邮箱----密码----TOTP密钥」，后台逐个登录导入并展示结果。"
+                          : "支持读取本项目导出的单账号对象或全部账号数组，并在提交前做数量确认。"}
             </DialogDescription>
           </DialogHeader>
 
