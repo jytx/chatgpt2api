@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import random
 import threading
 import time
 import uuid
@@ -14,8 +15,10 @@ from typing import Any
 from services.account_service import account_service
 from utils.log import logger
 
-# 单个账号登录之间的间隔秒数，避免同 IP 连续登录触发风控限流
-IMPORT_INTERVAL_SECONDS = 2.0
+# 单个账号登录之间的随机间隔上下限（秒）：拉长间隔并在区间内随机取值，
+# 避免固定节奏 + 同 IP 连续登录被识别为批量操作触发风控
+IMPORT_INTERVAL_MIN_SECONDS = 8.0
+IMPORT_INTERVAL_MAX_SECONDS = 20.0
 # 同时保留的进度记录上限，超出后优先清理已完成的旧记录
 MAX_PROGRESS_RECORDS = 20
 
@@ -101,7 +104,7 @@ def _run_import(progress_id: str, items: list[dict[str, str]]) -> None:
     """后台线程主体：逐个登录账号并写入号池。"""
     for index, item in enumerate(items):
         if index > 0:
-            time.sleep(IMPORT_INTERVAL_SECONDS)
+            time.sleep(random.uniform(IMPORT_INTERVAL_MIN_SECONDS, IMPORT_INTERVAL_MAX_SECONDS))
         _import_single(progress_id, item)
     with _progress_lock:
         progress = _import_progress.get(progress_id)
